@@ -162,6 +162,8 @@ textarea.in{resize:vertical;min-height:64px}
 .warn-line{font-size:13.5px;color:var(--warn)}
 .warn-line .link{padding:0 4px;font-size:13.5px}
 .desk-hint{font-size:13px;color:var(--ink-soft)}
+.store-tel{font-size:13px;color:var(--ink-soft)}
+.store-tel a{font-family:var(--f-num);font-weight:600;color:var(--pen);text-decoration:none}
 
 .bar{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--slip);border-top:1px solid var(--hair);
   padding-top:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
@@ -306,6 +308,7 @@ img{max-width:100%}
     <p class="warn-line" id="no-name" hidden>還沒填稱呼，店家可能不知道是誰的單。<button type="button" class="link" id="fill-name">去填</button></p>
     <p class="warn-line" id="no-phone" hidden>這家店要附手機，但還沒填號碼。<button type="button" class="link" id="fill-phone">去填</button></p>
     <p class="desk-hint" id="desk-hint" hidden>電腦版 LINE 不支援自動帶入訊息，請按「複製」再貼到聊天室。</p>
+    <p class="store-tel" id="store-tel" hidden>店家電話 <a id="store-tel-link"></a></p>
   </section>
 </div>
 
@@ -334,7 +337,6 @@ img{max-width:100%}
       <h3 id="g-msg">訊息</h3>
       <label class="field"><span>開頭</span><input class="in" id="set-greeting" autocomplete="off"></label>
       <label class="field"><span>結尾</span><input class="in" id="set-closing" autocomplete="off"></label>
-      <label class="field"><span>預設取餐</span><input class="in" type="time" id="set-default-time"></label>
       <label class="check"><input type="checkbox" id="set-total"><span>訊息附上合計金額</span></label>
     </section>
     <section class="group" aria-labelledby="g-store">
@@ -344,6 +346,8 @@ img{max-width:100%}
       <label class="field"><span>LINE ID</span><input class="in" id="set-line-id" placeholder="@ 開頭，選填" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
       <p class="help" id="line-help"></p>
       <label class="check"><input type="checkbox" id="set-send-phone"><span>這家店的訊息附上手機</span></label>
+      <label class="field"><span>預設取餐</span><input class="in" type="time" id="set-store-time"></label>
+      <label class="field"><span>店家電話</span><input class="in num" type="tel" id="set-store-tel" placeholder="選填" inputmode="tel" autocomplete="off"></label>
       <input type="search" class="in" id="set-q" placeholder="找要修改的品項" autocomplete="off" aria-label="找要修改的品項">
       <div class="edit-cols" aria-hidden="true"><span>編號</span><span>品名</span><span>價格</span></div>
       <ul class="edit-items" id="set-items"></ul>
@@ -394,6 +398,10 @@ const strList = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string'
 const validTime = (t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t || '');
 const newId = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const parsePrice = (v) => { const n = parseInt(String(v).replace(/[^\d]/g, ''), 10); return Number.isFinite(n) && n > 0 ? Math.min(n, 99999) : 0; };
+const idList = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x).slice(0, 100) : []);
+// priced extras such as 加起司 +10: they change the line's price, unlike the plain-text options
+const addList = (v) => (Array.isArray(v) ? v.filter((a) => a && typeof a === 'object' && str(a.name).trim()).slice(0, 6)
+  .map((a) => ({ name: str(a.name).trim(), price: parsePrice(a.price) })) : []);
 const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; };
 const fromMin = (n) => { n = ((n % 1440) + 1440) % 1440; return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); };
 const dur = (m) => (m >= 60 ? Math.floor(m / 60) + ' 小時' + (m % 60 ? ' ' + (m % 60) + ' 分' : '') : m + ' 分鐘');
@@ -401,6 +409,8 @@ const dayKey = (d) => d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDa
 const todayKey = () => dayKey(new Date());
 const isoDayKey = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : dayKey(d); };
 const fmtDay = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : (d.getMonth() + 1) + '/' + d.getDate(); };
+const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+const dayLabel = (d) => (d.getMonth() + 1) + '/' + d.getDate() + '（' + WEEK[d.getDay()] + '）';
 const splitNote = (t) => (t || '').split(/[、，,]/).map((x) => x.trim()).filter(Boolean);
 const phoneDigits = (p) => String(p || '').replace(/\D/g, '');
 const phoneOk = (p) => /^09\d{8}$/.test(phoneDigits(p));
@@ -410,8 +420,8 @@ function defaults() {
   return {
     v: 1, profile: { name: '', phone: '' }, defaultTime: FALLBACK_TIME,
     greeting: '您好，我要訂外帶：', closing: '謝謝！', showTotal: true, lastPay: PAYS[0],
-    stores: [{ id: 's1', name: '我的店家', lineId: '', example: false, sendPhone: false, rev: 0, cats: [], items: [] }],
-    storeId: 's1', last: {}, freq: {}
+    stores: [{ id: 's1', name: '我的店家', lineId: '', tel: '', example: false, sendPhone: false, defaultTime: '', rev: 0, cats: [], items: [] }],
+    storeId: 's1', last: {}, freq: {}, removed: []
   };
 }
 
@@ -428,11 +438,12 @@ function normalize(raw) {
     closing: str(raw.closing, d.closing).trim(),
     showTotal: raw.showTotal !== false,
     lastPay: PAYS.includes(raw.lastPay) ? raw.lastPay : PAYS[0],
-    stores: [], storeId: str(raw.storeId), last: {}, freq: {}
+    stores: [], storeId: str(raw.storeId), last: {}, freq: {}, removed: idList(raw.removed)
   };
   (Array.isArray(raw.stores) ? raw.stores : []).forEach((s, si) => {
     if (!s || typeof s !== 'object') return;
     const st = { id: str(s.id) || 's' + si, name: str(s.name).trim() || '我的店家', lineId: str(s.lineId).trim(), example: s.example === true,
+      tel: str(s.tel).trim(), defaultTime: validTime(s.defaultTime) ? s.defaultTime : '',
       sendPhone: s.sendPhone === true, rev: Number.isFinite(s.rev) && s.rev > 0 ? Math.floor(s.rev) : 0, cats: [], items: [] };
     (Array.isArray(s.cats) ? s.cats : []).forEach((c) => {
       if (!c || typeof c !== 'object') return;
@@ -445,7 +456,7 @@ function normalize(raw) {
       if (!name) return;
       st.items.push({ id: str(it.id) || st.id + '-' + ii, name, price: parsePrice(it.price),
         cat: str(it.cat).trim(), code: str(it.code).trim(), hot: it.hot === true, rec: it.rec === true,
-        veg: it.veg === true, sweet: it.sweet === true, sub: str(it.sub).trim(), opts: strList(it.opts) });
+        veg: it.veg === true, sweet: it.sweet === true, sub: str(it.sub).trim(), opts: strList(it.opts), adds: addList(it.adds) });
     });
     out.stores.push(st);
   });
@@ -454,10 +465,11 @@ function normalize(raw) {
   if (raw.last && typeof raw.last === 'object') {
     for (const [sid, L] of Object.entries(raw.last)) {
       if (!L || typeof L !== 'object') continue;
-      const qty = {}, notes = {};
+      const qty = {}, notes = {}, adds = {};
       if (L.qty && typeof L.qty === 'object') for (const [k, q] of Object.entries(L.qty)) { const n = Math.floor(Number(q)); if (n > 0) qty[k] = Math.min(n, 99); }
       if (L.notes && typeof L.notes === 'object') for (const [k, t] of Object.entries(L.notes)) { if (typeof t === 'string' && t.trim()) notes[k] = t.trim(); }
-      out.last[sid] = { qty, notes, note: str(L.note).trim(), pay: PAYS.includes(L.pay) ? L.pay : '', at: str(L.at) };
+      if (L.adds && typeof L.adds === 'object') for (const [k, v] of Object.entries(L.adds)) { const l = strList(v); if (l.length) adds[k] = l; }
+      out.last[sid] = { qty, notes, adds, note: str(L.note).trim(), pay: PAYS.includes(L.pay) ? L.pay : '', at: str(L.at) };
     }
   }
   if (raw.freq && typeof raw.freq === 'object') {
@@ -474,31 +486,38 @@ function normalize(raw) {
 /* ---------- state ---------- */
 const cached = local.get(KEY_CFG);
 const hadCache = !!(cached && cached.cfg);
-const SEED = {"v":1,"profile":{"name":"","phone":""},"defaultTime":"18:50","greeting":"您好，我要訂外帶：","closing":"謝謝！","showTotal":true,"lastPay":"悠遊卡","stores":[{"id":"s-liangzhi","name":"兩支北方麵食館","lineId":"","example":false,"sendPhone":false,"rev":2,"cats":[{"name":"麵食","note":"可選拉麵（細）或家常麵（寬）"},{"name":"炒麵","note":"刀切麵"},{"name":"炒飯","note":""},{"name":"燴飯","note":""},{"name":"點心","note":""},{"name":"湯羹","note":""},{"name":"豬肉","note":""},{"name":"雞肉","note":""},{"name":"牛肉","note":""},{"name":"海鮮","note":""},{"name":"蔬菜","note":""},{"name":"豆腐蛋","note":""},{"name":"火鍋","note":"附青菜、金針菇、冬粉、白飯"},{"name":"伴手禮","note":""}],"items":[{"id":"lz-noodle-01","name":"牛肉湯麵","price":105,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-02","name":"蕃茄牛肉湯麵","price":120,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-03","name":"紅燒牛肉麵","price":210,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-04","name":"蕃茄牛肉麵","price":225,"cat":"麵食","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-05","name":"半筋半肉牛肉麵","price":225,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-06","name":"酸辣麵","price":105,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-07","name":"榨菜肉絲麵","price":115,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-08","name":"蕃茄麵","price":105,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-09","name":"酸辣湯餃","price":145,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-noodle-10","name":"紅油抄手","price":100,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-noodle-11","name":"餛飩麵","price":125,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-12","name":"餛飩乾麵（抄手）","price":125,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-13","name":"豬肉炸醬麵","price":105,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-14","name":"清燉牛肉麵","price":200,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-15","name":"香辣油潑麵","price":135,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-16","name":"豬光榨現麵","price":105,"cat":"麵食","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-fnoodle-01","name":"素炒麵","price":120,"cat":"炒麵","code":"N01","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-02","name":"肉絲炒麵","price":130,"cat":"炒麵","code":"N02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-03","name":"牛肉炒麵","price":130,"cat":"炒麵","code":"N03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-04","name":"木須炒麵","price":130,"cat":"炒麵","code":"N04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-05","name":"木須炒餅","price":160,"cat":"炒麵","code":"N05","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-06","name":"蝦仁炒麵","price":160,"cat":"炒麵","code":"N06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-07","name":"什錦炒麵","price":160,"cat":"炒麵","code":"N07","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-01","name":"白飯","price":15,"cat":"炒飯","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-02","name":"蛋炒飯","price":95,"cat":"炒飯","code":"R01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-03","name":"肉絲炒飯","price":130,"cat":"炒飯","code":"R02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-04","name":"茄汁炒飯","price":130,"cat":"炒飯","code":"R03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-05","name":"香腸炒飯","price":130,"cat":"炒飯","code":"R04","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-06","name":"素炒飯","price":130,"cat":"炒飯","code":"R05","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-07","name":"鳳梨炒飯","price":130,"cat":"炒飯","code":"R06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-08","name":"牛肉炒飯","price":160,"cat":"炒飯","code":"R07","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-09","name":"蝦仁炒飯","price":160,"cat":"炒飯","code":"R08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-10","name":"櫻花蝦炒飯","price":180,"cat":"炒飯","code":"R09","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-11","name":"青椒牛肉炒飯","price":160,"cat":"炒飯","code":"R13","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-01","name":"豬肉燴飯","price":135,"cat":"燴飯","code":"B01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-02","name":"牛肉燴飯","price":160,"cat":"燴飯","code":"B02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-03","name":"什錦燴飯","price":165,"cat":"燴飯","code":"B04","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-04","name":"牛腩燴飯","price":200,"cat":"燴飯","code":"B05","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-01","name":"小米粥","price":25,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-02","name":"韭菜盒","price":45,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-03","name":"豬肉餡餅","price":55,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-04","name":"牛肉餡餅","price":60,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-05","name":"蔥油餅","price":40,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-06","name":"蘿蔔絲餅","price":70,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-07","name":"涎香蘿蔔糕","price":80,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-08","name":"兩支鍋貼（6個）","price":105,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-09","name":"烙餅","price":85,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-10","name":"雪花烙餅","price":95,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-11","name":"豆沙鍋餅","price":95,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-12","name":"芋泥鍋餅","price":95,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-13","name":"黃金流沙包（2顆）","price":85,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-14","name":"豬五花捲餅","price":130,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-15","name":"泡菜豬肉捲餅","price":140,"cat":"點心","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-16","name":"牛肉捲餅","price":150,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-17","name":"泡菜牛肉捲餅","price":160,"cat":"點心","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-18","name":"豬肉蒸餃（6顆）","price":100,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-19","name":"豬肉蒸餃（8顆）","price":125,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-20","name":"素蒸餃（6顆）","price":115,"cat":"點心","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-21","name":"素蒸餃（8顆）","price":150,"cat":"點心","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-22","name":"蝦仁蒸餃（6顆）","price":135,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-23","name":"蝦仁蒸餃（8顆）","price":170,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-24","name":"蝦仁燒賣（6顆）","price":160,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-25","name":"蝦仁燒賣（8顆）","price":200,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-26","name":"招牌湯包（6顆）","price":140,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-27","name":"招牌湯包（8顆）","price":175,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-28","name":"絲瓜蝦仁湯包（6顆）","price":175,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-29","name":"絲瓜蝦仁湯包（8顆）","price":210,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-01","name":"酸辣湯","price":45,"cat":"湯羹","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-02","name":"酸辣湯（中）","price":65,"cat":"湯羹","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-03","name":"酸辣湯（大）","price":90,"cat":"湯羹","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-04","name":"豆腐蛋花湯","price":45,"cat":"湯羹","code":"A01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-05","name":"蕃茄蛋花湯","price":65,"cat":"湯羹","code":"A02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-06","name":"金菇三絲湯","price":70,"cat":"湯羹","code":"A03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-07","name":"薑絲蛤蜊湯","price":95,"cat":"湯羹","code":"A04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-08","name":"餛飩湯","price":85,"cat":"湯羹","code":"A09","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-09","name":"蕃茄湯","price":60,"cat":"湯羹","code":"A11","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-10","name":"牛肉湯","price":180,"cat":"湯羹","code":"A12","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-11","name":"蕃茄牛肉湯","price":190,"cat":"湯羹","code":"A13","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-01","name":"蒜泥白肉","price":270,"cat":"豬肉","code":"P01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-02","name":"回鍋肉","price":270,"cat":"豬肉","code":"P03","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-03","name":"五更腸旺","price":280,"cat":"豬肉","code":"P04","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-04","name":"京醬肉絲","price":300,"cat":"豬肉","code":"P05","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"附荷葉餅","opts":[]},{"id":"lz-pork-05","name":"糖醋排骨","price":300,"cat":"豬肉","code":"P06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-06","name":"客家小炒","price":295,"cat":"豬肉","code":"P08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-07","name":"冰梅排骨","price":350,"cat":"豬肉","code":"P09","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-01","name":"左宗棠雞","price":290,"cat":"雞肉","code":"C01","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-02","name":"宮保雞柳","price":290,"cat":"雞肉","code":"C02","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-03","name":"腰果雞柳","price":300,"cat":"雞肉","code":"C03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-04","name":"紹興雞腿","price":335,"cat":"雞肉","code":"C05","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-beef-01","name":"芥藍牛肉","price":305,"cat":"牛肉","code":"E02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-beef-02","name":"蔥爆牛肉","price":315,"cat":"牛肉","code":"E03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-beef-03","name":"鐵板牛肉","price":345,"cat":"牛肉","code":"E04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-01","name":"酸菜魚","price":260,"cat":"海鮮","code":"S12","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-02","name":"糖醋魚片","price":295,"cat":"海鮮","code":"S03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-03","name":"清炒三鮮","price":295,"cat":"海鮮","code":"S04","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-04","name":"三杯中卷","price":350,"cat":"海鮮","code":"S05","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-05","name":"鳳梨蝦球","price":385,"cat":"海鮮","code":"S07","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-06","name":"清蒸比目魚","price":440,"cat":"海鮮","code":"S08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-01","name":"季節青菜","price":95,"cat":"蔬菜","code":"V01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-02","name":"高麗菜","price":100,"cat":"蔬菜","code":"V02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-03","name":"蠔油芥藍","price":115,"cat":"蔬菜","code":"V03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-04","name":"清炒龍鬚菜","price":160,"cat":"蔬菜","code":"V06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-05","name":"皮蛋地瓜葉","price":190,"cat":"蔬菜","code":"V07","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-06","name":"鹹蛋苦瓜","price":220,"cat":"蔬菜","code":"V08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-07","name":"合菜戴帽","price":280,"cat":"蔬菜","code":"V10","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"附荷葉餅","opts":[]},{"id":"lz-tofu-01","name":"菜脯蛋","price":185,"cat":"豆腐蛋","code":"T01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-02","name":"九層塔煎蛋","price":185,"cat":"豆腐蛋","code":"T02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-03","name":"蕃茄炒蛋","price":195,"cat":"豆腐蛋","code":"T03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-04","name":"紅燒豆腐","price":195,"cat":"豆腐蛋","code":"T05","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-05","name":"金莎蛋豆腐","price":280,"cat":"豆腐蛋","code":"T07","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-06","name":"尖椒千張","price":320,"cat":"豆腐蛋","code":"T08","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-01","name":"泡菜小火鍋","price":195,"cat":"火鍋","code":"H01","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-02","name":"什錦小火鍋","price":195,"cat":"火鍋","code":"H02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-03","name":"酸菜白肉小火鍋","price":220,"cat":"火鍋","code":"H04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-04","name":"沙茶豬肉小火鍋","price":240,"cat":"火鍋","code":"H13","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-05","name":"泡菜火鍋（中）","price":545,"cat":"火鍋","code":"H05","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-06","name":"泡菜火鍋（大）","price":715,"cat":"火鍋","code":"H06","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-07","name":"什錦火鍋（中）","price":545,"cat":"火鍋","code":"H07","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-08","name":"什錦火鍋（大）","price":715,"cat":"火鍋","code":"H08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-09","name":"酸菜白肉銅鍋（中）","price":810,"cat":"火鍋","code":"H11","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-10","name":"酸菜白肉銅鍋（大）","price":1010,"cat":"火鍋","code":"H12","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-01","name":"兩支泡菜（罐）","price":180,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-02","name":"兩支辣油（罐）","price":180,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-03","name":"兩支炒辣椒（罐）","price":180,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-04","name":"涎香蘿蔔糕（盒）","price":220,"cat":"伴手禮","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-05","name":"金牌牛肉麵（盒）","price":219,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]}]}],"storeId":"s-liangzhi","last":{},"freq":{}};
+const SEED = {"v":1,"profile":{"name":"","phone":""},"defaultTime":"18:50","greeting":"您好，我要訂外帶：","closing":"謝謝！","showTotal":true,"lastPay":"悠遊卡","stores":[{"id":"s-liangzhi","name":"兩支北方麵食館","lineId":"","example":false,"sendPhone":false,"rev":2,"cats":[{"name":"麵食","note":"可選拉麵（細）或家常麵（寬）"},{"name":"炒麵","note":"刀切麵"},{"name":"炒飯","note":""},{"name":"燴飯","note":""},{"name":"點心","note":""},{"name":"湯羹","note":""},{"name":"豬肉","note":""},{"name":"雞肉","note":""},{"name":"牛肉","note":""},{"name":"海鮮","note":""},{"name":"蔬菜","note":""},{"name":"豆腐蛋","note":""},{"name":"火鍋","note":"附青菜、金針菇、冬粉、白飯"},{"name":"伴手禮","note":""}],"items":[{"id":"lz-noodle-01","name":"牛肉湯麵","price":105,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-02","name":"蕃茄牛肉湯麵","price":120,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-03","name":"紅燒牛肉麵","price":210,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-04","name":"蕃茄牛肉麵","price":225,"cat":"麵食","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-05","name":"半筋半肉牛肉麵","price":225,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-06","name":"酸辣麵","price":105,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-07","name":"榨菜肉絲麵","price":115,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-08","name":"蕃茄麵","price":105,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-09","name":"酸辣湯餃","price":145,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-noodle-10","name":"紅油抄手","price":100,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-noodle-11","name":"餛飩麵","price":125,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-12","name":"餛飩乾麵（抄手）","price":125,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-13","name":"豬肉炸醬麵","price":105,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-14","name":"清燉牛肉麵","price":200,"cat":"麵食","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-15","name":"香辣油潑麵","price":135,"cat":"麵食","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-noodle-16","name":"豬光榨現麵","price":105,"cat":"麵食","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":["拉麵","家常麵"]},{"id":"lz-fnoodle-01","name":"素炒麵","price":120,"cat":"炒麵","code":"N01","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-02","name":"肉絲炒麵","price":130,"cat":"炒麵","code":"N02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-03","name":"牛肉炒麵","price":130,"cat":"炒麵","code":"N03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-04","name":"木須炒麵","price":130,"cat":"炒麵","code":"N04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-05","name":"木須炒餅","price":160,"cat":"炒麵","code":"N05","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-06","name":"蝦仁炒麵","price":160,"cat":"炒麵","code":"N06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-fnoodle-07","name":"什錦炒麵","price":160,"cat":"炒麵","code":"N07","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-01","name":"白飯","price":15,"cat":"炒飯","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-02","name":"蛋炒飯","price":95,"cat":"炒飯","code":"R01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-03","name":"肉絲炒飯","price":130,"cat":"炒飯","code":"R02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-04","name":"茄汁炒飯","price":130,"cat":"炒飯","code":"R03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-05","name":"香腸炒飯","price":130,"cat":"炒飯","code":"R04","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-06","name":"素炒飯","price":130,"cat":"炒飯","code":"R05","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-07","name":"鳳梨炒飯","price":130,"cat":"炒飯","code":"R06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-08","name":"牛肉炒飯","price":160,"cat":"炒飯","code":"R07","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-09","name":"蝦仁炒飯","price":160,"cat":"炒飯","code":"R08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-10","name":"櫻花蝦炒飯","price":180,"cat":"炒飯","code":"R09","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-frice-11","name":"青椒牛肉炒飯","price":160,"cat":"炒飯","code":"R13","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-01","name":"豬肉燴飯","price":135,"cat":"燴飯","code":"B01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-02","name":"牛肉燴飯","price":160,"cat":"燴飯","code":"B02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-03","name":"什錦燴飯","price":165,"cat":"燴飯","code":"B04","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-brice-04","name":"牛腩燴飯","price":200,"cat":"燴飯","code":"B05","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-01","name":"小米粥","price":25,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-02","name":"韭菜盒","price":45,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-03","name":"豬肉餡餅","price":55,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-04","name":"牛肉餡餅","price":60,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-05","name":"蔥油餅","price":40,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-06","name":"蘿蔔絲餅","price":70,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-07","name":"涎香蘿蔔糕","price":80,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-08","name":"兩支鍋貼（6個）","price":105,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-09","name":"烙餅","price":85,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-10","name":"雪花烙餅","price":95,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-11","name":"豆沙鍋餅","price":95,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-12","name":"芋泥鍋餅","price":95,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-13","name":"黃金流沙包（2顆）","price":85,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":true,"sub":"","opts":[]},{"id":"lz-dimsum-14","name":"豬五花捲餅","price":130,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-15","name":"泡菜豬肉捲餅","price":140,"cat":"點心","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-16","name":"牛肉捲餅","price":150,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-17","name":"泡菜牛肉捲餅","price":160,"cat":"點心","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-18","name":"豬肉蒸餃（6顆）","price":100,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-19","name":"豬肉蒸餃（8顆）","price":125,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-20","name":"素蒸餃（6顆）","price":115,"cat":"點心","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-21","name":"素蒸餃（8顆）","price":150,"cat":"點心","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-22","name":"蝦仁蒸餃（6顆）","price":135,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-23","name":"蝦仁蒸餃（8顆）","price":170,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-24","name":"蝦仁燒賣（6顆）","price":160,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-25","name":"蝦仁燒賣（8顆）","price":200,"cat":"點心","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-26","name":"招牌湯包（6顆）","price":140,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-27","name":"招牌湯包（8顆）","price":175,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-28","name":"絲瓜蝦仁湯包（6顆）","price":175,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-dimsum-29","name":"絲瓜蝦仁湯包（8顆）","price":210,"cat":"點心","code":"","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-01","name":"酸辣湯","price":45,"cat":"湯羹","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-02","name":"酸辣湯（中）","price":65,"cat":"湯羹","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-03","name":"酸辣湯（大）","price":90,"cat":"湯羹","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-04","name":"豆腐蛋花湯","price":45,"cat":"湯羹","code":"A01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-05","name":"蕃茄蛋花湯","price":65,"cat":"湯羹","code":"A02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-06","name":"金菇三絲湯","price":70,"cat":"湯羹","code":"A03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-07","name":"薑絲蛤蜊湯","price":95,"cat":"湯羹","code":"A04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-08","name":"餛飩湯","price":85,"cat":"湯羹","code":"A09","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-09","name":"蕃茄湯","price":60,"cat":"湯羹","code":"A11","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-10","name":"牛肉湯","price":180,"cat":"湯羹","code":"A12","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-soup-11","name":"蕃茄牛肉湯","price":190,"cat":"湯羹","code":"A13","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-01","name":"蒜泥白肉","price":270,"cat":"豬肉","code":"P01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-02","name":"回鍋肉","price":270,"cat":"豬肉","code":"P03","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-03","name":"五更腸旺","price":280,"cat":"豬肉","code":"P04","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-04","name":"京醬肉絲","price":300,"cat":"豬肉","code":"P05","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"附荷葉餅","opts":[]},{"id":"lz-pork-05","name":"糖醋排骨","price":300,"cat":"豬肉","code":"P06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-06","name":"客家小炒","price":295,"cat":"豬肉","code":"P08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pork-07","name":"冰梅排骨","price":350,"cat":"豬肉","code":"P09","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-01","name":"左宗棠雞","price":290,"cat":"雞肉","code":"C01","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-02","name":"宮保雞柳","price":290,"cat":"雞肉","code":"C02","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-03","name":"腰果雞柳","price":300,"cat":"雞肉","code":"C03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-chicken-04","name":"紹興雞腿","price":335,"cat":"雞肉","code":"C05","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-beef-01","name":"芥藍牛肉","price":305,"cat":"牛肉","code":"E02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-beef-02","name":"蔥爆牛肉","price":315,"cat":"牛肉","code":"E03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-beef-03","name":"鐵板牛肉","price":345,"cat":"牛肉","code":"E04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-01","name":"酸菜魚","price":260,"cat":"海鮮","code":"S12","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-02","name":"糖醋魚片","price":295,"cat":"海鮮","code":"S03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-03","name":"清炒三鮮","price":295,"cat":"海鮮","code":"S04","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-04","name":"三杯中卷","price":350,"cat":"海鮮","code":"S05","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-05","name":"鳳梨蝦球","price":385,"cat":"海鮮","code":"S07","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-sea-06","name":"清蒸比目魚","price":440,"cat":"海鮮","code":"S08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-01","name":"季節青菜","price":95,"cat":"蔬菜","code":"V01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-02","name":"高麗菜","price":100,"cat":"蔬菜","code":"V02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-03","name":"蠔油芥藍","price":115,"cat":"蔬菜","code":"V03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-04","name":"清炒龍鬚菜","price":160,"cat":"蔬菜","code":"V06","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-05","name":"皮蛋地瓜葉","price":190,"cat":"蔬菜","code":"V07","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-06","name":"鹹蛋苦瓜","price":220,"cat":"蔬菜","code":"V08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-veg-07","name":"合菜戴帽","price":280,"cat":"蔬菜","code":"V10","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"附荷葉餅","opts":[]},{"id":"lz-tofu-01","name":"菜脯蛋","price":185,"cat":"豆腐蛋","code":"T01","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-02","name":"九層塔煎蛋","price":185,"cat":"豆腐蛋","code":"T02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-03","name":"蕃茄炒蛋","price":195,"cat":"豆腐蛋","code":"T03","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-04","name":"紅燒豆腐","price":195,"cat":"豆腐蛋","code":"T05","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-05","name":"金莎蛋豆腐","price":280,"cat":"豆腐蛋","code":"T07","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-tofu-06","name":"尖椒千張","price":320,"cat":"豆腐蛋","code":"T08","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-01","name":"泡菜小火鍋","price":195,"cat":"火鍋","code":"H01","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-02","name":"什錦小火鍋","price":195,"cat":"火鍋","code":"H02","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-03","name":"酸菜白肉小火鍋","price":220,"cat":"火鍋","code":"H04","hot":false,"rec":true,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-04","name":"沙茶豬肉小火鍋","price":240,"cat":"火鍋","code":"H13","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-05","name":"泡菜火鍋（中）","price":545,"cat":"火鍋","code":"H05","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-06","name":"泡菜火鍋（大）","price":715,"cat":"火鍋","code":"H06","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-07","name":"什錦火鍋（中）","price":545,"cat":"火鍋","code":"H07","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-08","name":"什錦火鍋（大）","price":715,"cat":"火鍋","code":"H08","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-09","name":"酸菜白肉銅鍋（中）","price":810,"cat":"火鍋","code":"H11","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-pot-10","name":"酸菜白肉銅鍋（大）","price":1010,"cat":"火鍋","code":"H12","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-01","name":"兩支泡菜（罐）","price":180,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-02","name":"兩支辣油（罐）","price":180,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-03","name":"兩支炒辣椒（罐）","price":180,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-04","name":"涎香蘿蔔糕（盒）","price":220,"cat":"伴手禮","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]},{"id":"lz-gift-05","name":"金牌牛肉麵（盒）","price":219,"cat":"伴手禮","code":"","hot":true,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[]}]},{"id":"s-houjie","name":"後街廚房","lineId":"","tel":"02-2406-1581","example":false,"sendPhone":false,"defaultTime":"08:00","rev":1,"cats":[{"name":"吐司漢堡","note":"都含蛋"},{"name":"蛋餅河粉","note":"都含蛋"},{"name":"中式鐵板麵","note":""},{"name":"果醬吐司","note":""},{"name":"單點炸物","note":""},{"name":"飲品","note":"甜度固定"}],"items":[{"id":"bj-toast-01","name":"煎蛋吐司","price":25,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-02","name":"肉鬆蛋吐司","price":30,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-03","name":"肉鬆蛋漢堡","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-04","name":"豬肉蛋吐司","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-05","name":"豬肉蛋漢堡","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-06","name":"素鬆蛋吐司","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-07","name":"素鬆蛋漢堡","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-08","name":"起司蛋吐司","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-09","name":"起司蛋漢堡","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-10","name":"培根蛋吐司","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-11","name":"培根蛋漢堡","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-12","name":"火腿蛋吐司","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-13","name":"火腿蛋漢堡","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-14","name":"香雞蛋吐司","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-15","name":"香雞蛋漢堡","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-16","name":"雞肉蛋吐司","price":35,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-17","name":"雞肉蛋漢堡","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-18","name":"鮪魚蛋吐司","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-19","name":"鮪魚蛋漢堡","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-20","name":"素鬆起司蛋吐司","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-21","name":"素鬆起司蛋漢堡","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":true,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-22","name":"薯餅蛋吐司","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-23","name":"薯餅蛋漢堡","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-24","name":"大熱狗蛋吐司","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-25","name":"大熱狗蛋漢堡","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-26","name":"德式香腸蛋吐司","price":40,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-27","name":"德式香腸蛋漢堡","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-28","name":"豬排蛋吐司","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-29","name":"豬排蛋漢堡","price":50,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-30","name":"牛肉蛋吐司","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-31","name":"牛肉蛋漢堡","price":50,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-32","name":"培根火腿蛋吐司","price":45,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-33","name":"培根火腿蛋漢堡","price":50,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-34","name":"總匯蛋吐司","price":50,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-35","name":"總匯蛋漢堡","price":55,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-36","name":"薯餅豬肉蛋吐司","price":50,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-37","name":"薯餅豬肉蛋漢堡","price":55,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-38","name":"菲力雞吐司","price":55,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-39","name":"菲力雞漢堡","price":60,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-40","name":"西西里雞蛋吐司","price":55,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-41","name":"西西里雞蛋漢堡","price":60,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-42","name":"卡啦雞蛋吐司","price":55,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-toast-43","name":"卡啦雞蛋漢堡","price":60,"cat":"吐司漢堡","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-01","name":"原味蛋餅","price":25,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-02","name":"原味河粉","price":30,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-03","name":"玉米蛋餅","price":30,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-04","name":"玉米河粉","price":35,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-05","name":"肉鬆蛋餅","price":30,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-06","name":"肉鬆河粉","price":35,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-07","name":"起司蛋餅","price":30,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-08","name":"起司河粉","price":35,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-09","name":"蔬菜蛋餅","price":35,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-10","name":"蔬菜河粉","price":40,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-11","name":"培根蛋餅","price":35,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-12","name":"培根河粉","price":40,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-13","name":"火腿蛋餅","price":35,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-14","name":"火腿河粉","price":40,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-15","name":"雞肉蛋餅","price":35,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-16","name":"雞肉河粉","price":40,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-17","name":"鮪魚蛋餅","price":40,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-18","name":"鮪魚河粉","price":45,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-19","name":"薯餅蛋餅","price":40,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-20","name":"薯餅河粉","price":45,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-21","name":"大熱狗蛋餅","price":40,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-22","name":"大熱狗河粉","price":45,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-23","name":"豬排蛋餅","price":45,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-24","name":"豬排河粉","price":50,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-25","name":"西西里雞蛋餅","price":55,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-26","name":"西西里雞河粉","price":60,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-27","name":"卡啦雞蛋餅","price":55,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-28","name":"卡啦雞河粉","price":60,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-29","name":"菲力雞蛋餅","price":55,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cake-30","name":"菲力雞河粉","price":60,"cat":"蛋餅河粉","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-01","name":"蘿蔔糕","price":25,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-02","name":"蘿蔔糕加蛋","price":40,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-03","name":"蔥抓餅","price":30,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-04","name":"蔥抓餅加蛋","price":45,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-05","name":"煎餃（8個）","price":30,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-06","name":"煎餃（8個）加蛋","price":45,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-07","name":"蘑菇鐵板麵","price":40,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-08","name":"蘑菇鐵板麵加蛋","price":55,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-09","name":"黑胡椒鐵板麵","price":40,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-10","name":"黑胡椒鐵板麵加蛋","price":55,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-11","name":"肉燥鐵板麵","price":40,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-12","name":"肉燥鐵板麵加蛋","price":55,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-13","name":"義大利肉醬鐵板麵","price":40,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-14","name":"義大利肉醬鐵板麵加蛋","price":55,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-15","name":"咖哩鐵板麵","price":40,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-16","name":"咖哩鐵板麵加蛋","price":55,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-17","name":"宮保雞丁鐵板麵","price":45,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-18","name":"宮保雞丁鐵板麵加蛋","price":60,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-19","name":"海南雞鐵板麵","price":45,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-20","name":"海南雞鐵板麵加蛋","price":60,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-21","name":"三杯雞鐵板麵","price":45,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-22","name":"三杯雞鐵板麵加蛋","price":60,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-23","name":"打拋豬鐵板麵","price":45,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-24","name":"打拋豬鐵板麵加蛋","price":60,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-25","name":"奶油雞肉鐵板麵","price":45,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-cn-26","name":"奶油雞肉鐵板麵加蛋","price":60,"cat":"中式鐵板麵","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-01","name":"巧克力吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-02","name":"巧克力吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-03","name":"花生吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-04","name":"花生吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-05","name":"草莓吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-06","name":"草莓吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-07","name":"奶油吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-08","name":"奶油吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-09","name":"椰香吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-10","name":"椰香吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-11","name":"抹茶吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-12","name":"抹茶吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-13","name":"香蒜吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-14","name":"香蒜吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-15","name":"藍莓吐司（薄片）","price":15,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-jam-16","name":"藍莓吐司（厚片）","price":25,"cat":"果醬吐司","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-01","name":"起司","price":10,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[]},{"id":"bj-side-02","name":"火腿","price":10,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-03","name":"茶葉蛋","price":10,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-04","name":"培根／豬肉","price":15,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-05","name":"德式香腸","price":15,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-06","name":"荷包蛋","price":15,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-07","name":"薯餅／薯條","price":20,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-08","name":"小熱狗（4條）","price":20,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-09","name":"大熱狗","price":20,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-10","name":"豬排／牛肉","price":20,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-11","name":"菲力雞","price":35,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-12","name":"雞塊（5個）","price":35,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-13","name":"雞球（10個）","price":35,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-14","name":"西西里雞","price":35,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-side-15","name":"卡啦雞","price":35,"cat":"單點炸物","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[{"name":"加起司","price":10}]},{"id":"bj-drink-01","name":"紅茶（中）","price":15,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-02","name":"紅茶（大）","price":20,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-03","name":"奶茶（中）","price":20,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-04","name":"奶茶（大）","price":25,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-05","name":"豆漿（中）","price":15,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-06","name":"豆漿（大）","price":20,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-07","name":"無糖紅茶（中）","price":15,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-08","name":"無糖紅茶（大）","price":20,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-09","name":"無糖豆漿（中）","price":15,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-10","name":"無糖豆漿（大）","price":20,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-11","name":"無糖綠茶（中）","price":15,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-12","name":"無糖綠茶（大）","price":20,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-13","name":"美式咖啡（中）","price":35,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-14","name":"美式咖啡（大）","price":45,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":["冰","熱"],"adds":[]},{"id":"bj-drink-15","name":"國農牛乳（巧克力）","price":30,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[]},{"id":"bj-drink-16","name":"國農牛乳（草莓）","price":30,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[]},{"id":"bj-drink-17","name":"國農牛乳（胚芽）","price":30,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[]},{"id":"bj-drink-18","name":"國農牛乳（果汁）","price":30,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[]},{"id":"bj-drink-19","name":"國農牛乳（原味）","price":30,"cat":"飲品","code":"","hot":false,"rec":false,"veg":false,"sweet":false,"sub":"","opts":[],"adds":[]}]}],"storeId":"s-liangzhi","last":{},"freq":{},"removed":[]};
 let cfg = normalize(cached && cached.cfg ? cached.cfg : SEED);
 // a phone that already holds an older copy of a built-in menu gets the new one; its own settings and added items stay
+// a built-in store the phone hasn't seen yet is added, unless the person deleted it before
 for (const fresh of normalize(SEED).stores) {
   const mine = cfg.stores.find((s) => s.id === fresh.id);
-  if (!mine || mine.rev >= fresh.rev) continue;
-  const own = mine.items.filter((it) => !fresh.items.some((x) => x.id === it.id) && !it.id.startsWith('lz-'));
+  if (!mine) { if (!cfg.removed.includes(fresh.id)) cfg.stores.push(fresh); continue; }
+  if (mine.rev >= fresh.rev) continue;
+  // built-in dishes carry a store prefix (lz-, bj-); dishes the person added keep theirs
+  const own = mine.items.filter((it) => !fresh.items.some((x) => x.id === it.id) && !/^[a-z]+-/.test(it.id));
   mine.cats = fresh.cats;
   mine.items = fresh.items.concat(own);
   mine.rev = fresh.rev;
+  if (!mine.tel) mine.tel = fresh.tel;
+  if (!mine.defaultTime) mine.defaultTime = fresh.defaultTime;
 }
 
-const order = { qty: {}, notes: {}, note: '', time: cfg.defaultTime, pay: cfg.lastPay, timeTouched: false, payTouched: false };
+// pickup times the person changed, per store; untouched stores use their own default
+const order = { qty: {}, notes: {}, adds: {}, note: '', timeBy: {}, pay: cfg.lastPay, payTouched: false };
 (() => {
   const d = local.get(KEY_DRAFT);
   if (!d || d.date !== todayKey()) return;
   if (d.qty && typeof d.qty === 'object') for (const [k, q] of Object.entries(d.qty)) { const n = Math.floor(Number(q)); if (n > 0) order.qty[k] = Math.min(n, 99); }
   if (d.notes && typeof d.notes === 'object') for (const [k, t] of Object.entries(d.notes)) if (typeof t === 'string') order.notes[k] = t;
   order.note = str(d.note);
-  if (validTime(d.time)) { order.time = d.time; order.timeTouched = true; }
+  if (d.adds && typeof d.adds === 'object') for (const [k, v] of Object.entries(d.adds)) { const l = strList(v); if (l.length) order.adds[k] = l; }
+  if (d.timeBy && typeof d.timeBy === 'object') for (const [k, t] of Object.entries(d.timeBy)) if (validTime(t)) order.timeBy[k] = t;
   if (PAYS.includes(d.pay)) { order.pay = d.pay; order.payTouched = true; }
 })();
 function saveDraft() {
-  local.set(KEY_DRAFT, { date: todayKey(), qty: order.qty, notes: order.notes, note: order.note,
-    time: order.timeTouched ? order.time : null, pay: order.payTouched ? order.pay : null });
+  local.set(KEY_DRAFT, { date: todayKey(), qty: order.qty, notes: order.notes, adds: order.adds, note: order.note,
+    timeBy: order.timeBy, pay: order.payTouched ? order.pay : null });
 }
 
 // What the item list is showing: a category key (":all", ":fav", ":picked" or a category name) and a search text.
@@ -519,12 +538,26 @@ function catOrder(s, includeBlank) {
 }
 const catNote = (s, name) => { const c = s.cats.find((x) => x.name === name); return c ? c.note : ''; };
 const realCat = () => (view.cat && view.cat[0] !== ':' && !view.q.trim() ? view.cat : '');
+const storeDefault = () => curStore().defaultTime || cfg.defaultTime;
+const pickTime = () => order.timeBy[cfg.storeId] || storeDefault();
+// A time already past today means tomorrow: breakfast is often ordered the night before.
+function pickInfo() {
+  const t = pickTime();
+  const now = new Date();
+  const ago = now.getHours() * 60 + now.getMinutes() - toMin(t);
+  const tomorrow = ago > 0;
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (tomorrow ? 1 : 0));
+  return { t, tomorrow, ago, diff: tomorrow ? 1440 - ago : -ago, date };
+}
+const timeLabel = () => { const p = pickInfo(); return p.tomorrow ? '明天 ' + dayLabel(p.date) + p.t : p.t; };
+const addsOf = (it) => (order.adds[it.id] || []).filter((n) => it.adds.some((a) => a.name === n));
+const unitOf = (it) => it.price + addsOf(it).reduce((sum, n) => sum + it.adds.find((a) => a.name === n).price, 0);
 
 function totals() {
   const rows = menuOf(curStore()).filter((it) => (order.qty[it.id] || 0) > 0)
-    .map((it) => ({ it, q: order.qty[it.id], note: (order.notes[it.id] || '').trim() }));
+    .map((it) => ({ it, q: order.qty[it.id], note: (order.notes[it.id] || '').trim(), adds: addsOf(it) }));
   let count = 0, total = 0, priced = rows.length > 0;
-  for (const r of rows) { count += r.q; if (r.it.price > 0) total += r.q * r.it.price; else priced = false; }
+  for (const r of rows) { count += r.q; if (r.it.price > 0) total += r.q * unitOf(r.it); else priced = false; }
   return { rows, count, total, priced };
 }
 
@@ -533,10 +566,13 @@ function buildMessage() {
   if (!rows.length) return '';
   const L = [];
   if (cfg.greeting.trim()) L.push(cfg.greeting.trim());
-  for (const r of rows) L.push('・' + (r.it.code ? r.it.code + ' ' : '') + r.it.name.trim() + ' ×' + r.q + (r.note ? '（' + r.note + '）' : ''));
+  for (const r of rows) {
+    const extra = r.adds.concat(r.note ? [r.note] : []).join('、');
+    L.push('・' + (r.it.code ? r.it.code + ' ' : '') + r.it.name.trim() + ' ×' + r.q + (extra ? '（' + extra + '）' : ''));
+  }
   L.push(cfg.showTotal && priced ? '共 ' + count + ' 份，合計 ' + total + ' 元' : '共 ' + count + ' 份');
   L.push('');
-  L.push('取餐時間：' + order.time);
+  L.push('取餐時間：' + timeLabel());
   L.push('付款方式：' + order.pay);
   if (order.note.trim()) L.push('備註：' + order.note.trim());
   const name = cfg.profile.name.trim();
@@ -621,7 +657,6 @@ function applyRemote(remote, provisional) {
   const prevStore = cfg.storeId;
   cfg = remote;
   if (!provisional) { sync.lastJSON = JSON.stringify(remote); sync.dirty = false; setSync('synced'); }
-  if (!order.timeTouched) order.time = cfg.defaultTime;
   if (!order.payTouched) order.pay = cfg.lastPay;
   if (cfg.storeId !== prevStore) resetView();
   cacheCfg();
@@ -764,15 +799,17 @@ function itemRow(it) {
       it.veg ? el('span', { class: 'tag veg' }, '素') : null,
       it.sweet ? el('span', { class: 'tag sweet' }, '甜') : null,
       it.rec ? el('span', { class: 'tag rec' }, '推') : null),
-    el('span', { class: 'price' }, it.price > 0 ? '$' + it.price : '—'),
+    el('span', { class: 'price' }, it.price > 0 ? '$' + unitOf(it) : '—'),
     el('div', { class: 'stepper' },
       el('button', { type: 'button', dataset: { act: 'dec' }, 'aria-label': it.name + '，減一份', disabled: q === 0 }, '−'),
       el('output', { class: 'qty', 'aria-live': 'polite', 'aria-label': it.name + ' 數量' }, String(q)),
       el('button', { type: 'button', dataset: { act: 'inc' }, 'aria-label': it.name + '，加一份' }, '＋')
     ),
     el('div', { class: 'item-note', hidden: q === 0 },
-      it.opts.length ? el('div', { class: 'opts', role: 'group', 'aria-label': it.name + ' 選項' },
-        ...it.opts.map((o) => el('button', { type: 'button', class: 'opt', dataset: { opt: o }, 'aria-pressed': String(hasOpt(it.id, o)) }, o))) : null,
+      it.opts.length || it.adds.length ? el('div', { class: 'opts', role: 'group', 'aria-label': it.name + ' 選項' },
+        ...it.opts.map((o) => el('button', { type: 'button', class: 'opt', dataset: { opt: o }, 'aria-pressed': String(hasOpt(it.id, o)) }, o)),
+        ...it.adds.map((a) => el('button', { type: 'button', class: 'opt', dataset: { add: a.name }, 'aria-pressed': String(addsOf(it).includes(a.name)) },
+          a.name + (a.price ? ' +' + a.price : '')))) : null,
       el('input', { class: 'in', id: 'note-' + it.id, value: order.notes[it.id] || '', placeholder: '這項的備註（不要蔥、辣一點…）', 'aria-label': it.name + ' 備註', autocomplete: 'off', enterkeyhint: 'done' })
     )
   );
@@ -834,7 +871,7 @@ function setQty(id, q) {
 }
 
 function syncOptChips(li, id) {
-  for (const b of li.querySelectorAll('.opt')) b.setAttribute('aria-pressed', String(hasOpt(id, b.dataset.opt)));
+  for (const b of li.querySelectorAll('.opt[data-opt]')) b.setAttribute('aria-pressed', String(hasOpt(id, b.dataset.opt)));
 }
 
 function toggleOpt(it, opt) {
@@ -848,23 +885,37 @@ function toggleOpt(it, opt) {
   renderSummary();
 }
 
+function toggleAdd(it, name) {
+  const cur = addsOf(it);
+  const next = cur.includes(name) ? cur.filter((n) => n !== name) : cur.concat(name);
+  if (next.length) order.adds[it.id] = next; else delete order.adds[it.id];
+  const li = rowOf(it.id);
+  if (li) {
+    for (const b of li.querySelectorAll('.opt[data-add]')) b.setAttribute('aria-pressed', String(next.includes(b.dataset.add)));
+    if (it.price > 0) li.querySelector('.price').textContent = '$' + unitOf(it);
+  }
+  saveDraft();
+  renderSummary();
+}
+
 function renderTimeHint() {
-  const now = new Date();
-  const diff = toMin(order.time) - (now.getHours() * 60 + now.getMinutes());
+  const p = pickInfo();
   const h = $('time-hint');
   let text, warn = false;
-  if (diff < 0) { text = '比現在早 ' + dur(-diff) + '，確認一下時間'; warn = true; }
-  else if (diff < 15) { text = diff === 0 ? '就是現在，店家可能來不及' : '只剩 ' + diff + ' 分鐘，店家可能來不及'; warn = true; }
-  else text = '距現在 ' + dur(diff);
+  if (p.tomorrow && p.ago <= 120) { text = '今天的 ' + p.t + ' 已經過了，會當成明天 ' + dayLabel(p.date); warn = true; }
+  else if (p.tomorrow) text = '明天 ' + dayLabel(p.date) + '取餐，距現在 ' + dur(p.diff);
+  else if (p.diff < 15) { text = p.diff === 0 ? '就是現在，店家可能來不及' : '只剩 ' + p.diff + ' 分鐘，店家可能來不及'; warn = true; }
+  else text = '今天取餐，距現在 ' + dur(p.diff);
   h.textContent = text;
   h.classList.toggle('warn', warn);
 }
 
 function renderOrderFields() {
-  $('clock-face').textContent = order.time;
-  if ($('pickup').value.slice(0, 5) !== order.time) $('pickup').value = order.time;
-  $('reset-time').textContent = '回到預設 ' + cfg.defaultTime;
-  $('reset-time').hidden = order.time === cfg.defaultTime;
+  const t = pickTime();
+  $('clock-face').textContent = t;
+  if ($('pickup').value.slice(0, 5) !== t) $('pickup').value = t;
+  $('reset-time').textContent = '回到預設 ' + storeDefault();
+  $('reset-time').hidden = t === storeDefault();
   renderTimeHint();
   for (const r of document.querySelectorAll('input[name="pay"]')) r.checked = r.value === order.pay;
   if ($('order-note').value !== order.note) $('order-note').value = order.note;
@@ -896,7 +947,7 @@ function renderSummary() {
   bubble.textContent = msg || '選好品項，訊息會出現在這裡。';
   bubble.classList.toggle('empty', !msg);
   $('tally-main').textContent = count ? count + ' 份' + (priced ? ' · $' + total : '') : '還沒選品項';
-  $('tally-sub').textContent = order.time + ' 取餐 · ' + order.pay;
+  $('tally-sub').textContent = (pickInfo().tomorrow ? '明天 ' : '') + pickTime() + ' 取餐 · ' + order.pay;
   const send = $('send');
   if (msg) { send.href = lineHref(msg); send.removeAttribute('aria-disabled'); }
   else { send.removeAttribute('href'); send.setAttribute('aria-disabled', 'true'); }
@@ -905,6 +956,9 @@ function renderSummary() {
   $('send-to').textContent = oaId(s) ? '會直接開「' + s.name + '」的 LINE 聊天室' : '會跳出 LINE 分享選單，再點這家店';
   $('no-name').hidden = !msg || !!cfg.profile.name.trim();
   $('no-phone').hidden = !msg || !s.sendPhone || !!cfg.profile.phone.trim();
+  const tel = (s.tel || '').trim();
+  $('store-tel').hidden = !tel;
+  if (tel) { const a = $('store-tel-link'); a.textContent = tel; a.href = 'tel:' + tel.replace(/[^\d+]/g, ''); }
   const L = cfg.last[s.id];
   const hasLast = !!(L && Object.keys(L.qty).some((k) => s.items.some((it) => it.id === k)));
   $('use-last').hidden = !hasLast;
@@ -932,7 +986,12 @@ function toast(text) {
 /* ---------- order actions ---------- */
 $('items').addEventListener('click', (e) => {
   const opt = e.target.closest('button.opt');
-  if (opt) { const it = findItem(opt.closest('li').dataset.id); if (it) toggleOpt(it, opt.dataset.opt); return; }
+  if (opt) {
+    const it = findItem(opt.closest('li').dataset.id);
+    if (it && opt.dataset.add) toggleAdd(it, opt.dataset.add);
+    else if (it) toggleOpt(it, opt.dataset.opt);
+    return;
+  }
   const b = e.target.closest('button[data-act]');
   if (!b) return;
   const id = b.closest('li').dataset.id;
@@ -961,20 +1020,19 @@ $('q').addEventListener('input', (e) => { view.q = e.target.value; renderMenu();
 
 function setTime(t) {
   if (!validTime(t)) return;
-  order.time = t;
-  order.timeTouched = true;
+  if (t === storeDefault()) delete order.timeBy[cfg.storeId]; else order.timeBy[cfg.storeId] = t;
   saveDraft();
   renderOrderFields();
   renderSummary();
 }
 $('pickup').addEventListener('input', (e) => { const v = (e.target.value || '').slice(0, 5); if (validTime(v)) setTime(v); });
-$('pickup').addEventListener('change', (e) => { const v = (e.target.value || '').slice(0, 5); if (validTime(v)) setTime(v); else e.target.value = order.time; });
+$('pickup').addEventListener('change', (e) => { const v = (e.target.value || '').slice(0, 5); if (validTime(v)) setTime(v); else e.target.value = pickTime(); });
 $('nudges').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-shift]');
-  if (b) setTime(fromMin(toMin(order.time) + Number(b.dataset.shift)));
+  if (b) setTime(fromMin(toMin(pickTime()) + Number(b.dataset.shift)));
 });
-$('reset-time').addEventListener('click', () => setTime(cfg.defaultTime));
-setInterval(renderTimeHint, 30000);
+$('reset-time').addEventListener('click', () => setTime(storeDefault()));
+setInterval(() => { renderTimeHint(); renderSummary(); }, 30000);
 
 $('pay').addEventListener('change', (e) => {
   if (e.target.name !== 'pay') return;
@@ -1018,7 +1076,7 @@ $('add-form').addEventListener('submit', (e) => {
   const s = curStore();
   const rc = realCat();
   const cat = rc === OTHER ? '' : rc;
-  const it = { id: newId('i'), name, price: parsePrice($('add-price').value), cat, code: '', hot: false, rec: false, veg: false, sweet: false, sub: '', opts: [] };
+  const it = { id: newId('i'), name, price: parsePrice($('add-price').value), cat, code: '', hot: false, rec: false, veg: false, sweet: false, sub: '', opts: [], adds: [] };
   let at = -1;
   if (cat) s.items.forEach((x, i) => { if (x.cat === cat) at = i; });
   if (at >= 0) s.items.splice(at + 1, 0, it); else s.items.push(it);
@@ -1032,18 +1090,20 @@ $('add-form').addEventListener('submit', (e) => {
 
 function rememberLast() {
   const s = curStore();
-  const qty = {}, notes = {};
+  const qty = {}, notes = {}, adds = {};
   for (const it of s.items) {
     const q = order.qty[it.id] || 0;
     if (!q) continue;
     qty[it.id] = q;
     const n = (order.notes[it.id] || '').trim();
     if (n) notes[it.id] = n;
+    const a = addsOf(it);
+    if (a.length) adds[it.id] = a;
   }
-  const snap = { qty, notes, note: order.note.trim(), pay: order.pay };
+  const snap = { qty, notes, adds, note: order.note.trim(), pay: order.pay };
   const prev = cfg.last[s.id];
   const prevToday = !!(prev && isoDayKey(prev.at) === todayKey());
-  if (prevToday && JSON.stringify({ qty: prev.qty, notes: prev.notes, note: prev.note, pay: prev.pay }) === JSON.stringify(snap)) return;
+  if (prevToday && JSON.stringify({ qty: prev.qty, notes: prev.notes, adds: prev.adds, note: prev.note, pay: prev.pay }) === JSON.stringify(snap)) return;
   // 常點 counts how many orders included an item; resending on the same day replaces that day's order
   const F = cfg.freq[s.id] || (cfg.freq[s.id] = {});
   if (prevToday) for (const k of Object.keys(prev.qty)) { F[k] = (F[k] || 0) - 1; if (F[k] <= 0) delete F[k]; }
@@ -1061,6 +1121,7 @@ $('use-last').addEventListener('click', () => {
   for (const it of s.items) {
     if (L.qty[it.id]) order.qty[it.id] = L.qty[it.id]; else delete order.qty[it.id];
     if (L.notes[it.id]) order.notes[it.id] = L.notes[it.id]; else delete order.notes[it.id];
+    if (L.adds[it.id]) order.adds[it.id] = L.adds[it.id].slice(); else delete order.adds[it.id];
   }
   order.note = L.note || '';
   if (L.pay) { order.pay = L.pay; order.payTouched = true; }
@@ -1072,7 +1133,7 @@ $('use-last').addEventListener('click', () => {
 });
 
 $('clear-order').addEventListener('click', () => {
-  for (const it of curStore().items) { delete order.qty[it.id]; delete order.notes[it.id]; }
+  for (const it of curStore().items) { delete order.qty[it.id]; delete order.notes[it.id]; delete order.adds[it.id]; }
   order.note = '';
   saveDraft();
   renderMenu();
@@ -1117,7 +1178,7 @@ $('send').addEventListener('click', (e) => {
 
 /* ---------- stores ---------- */
 function addStore(inSheet) {
-  const s = { id: newId('s'), name: '新店家', lineId: '', example: false, sendPhone: false, rev: 0, cats: [], items: [] };
+  const s = { id: newId('s'), name: '新店家', lineId: '', tel: '', example: false, sendPhone: false, defaultTime: '', rev: 0, cats: [], items: [] };
   cfg.stores.push(s);
   cfg.storeId = s.id;
   resetView();
@@ -1203,6 +1264,8 @@ function renderSettingsStore() {
   $('set-store-name').value = s.name;
   $('set-line-id').value = s.lineId;
   $('set-send-phone').checked = !!s.sendPhone;
+  $('set-store-time').value = storeDefault();
+  $('set-store-tel').value = s.tel || '';
   renderLineHelp();
   setView.q = '';
   $('set-q').value = '';
@@ -1217,7 +1280,6 @@ function renderSettings() {
   $('set-phone').value = cfg.profile.phone;
   $('set-greeting').value = cfg.greeting;
   $('set-closing').value = cfg.closing;
-  $('set-default-time').value = cfg.defaultTime;
   $('set-total').checked = cfg.showTotal;
   renderSettingsStore();
 }
@@ -1252,16 +1314,15 @@ bindText('set-name', (v) => { cfg.profile.name = v; });
 bindText('set-greeting', (v) => { cfg.greeting = v; });
 bindText('set-closing', (v) => { cfg.closing = v; });
 $('set-total').addEventListener('change', (e) => { cfg.showTotal = e.target.checked; persist(); renderSummary(); });
-$('set-default-time').addEventListener('change', (e) => {
+$('set-store-time').addEventListener('change', (e) => {
   const v = (e.target.value || '').slice(0, 5);
-  if (!validTime(v)) { e.target.value = cfg.defaultTime; return; }
-  const old = cfg.defaultTime;
-  cfg.defaultTime = v;
-  if (!order.timeTouched || order.time === old) order.time = v;
+  if (!validTime(v)) { e.target.value = storeDefault(); return; }
+  curStore().defaultTime = v;
   persist();
   renderOrderFields();
   renderSummary();
 });
+$('set-store-tel').addEventListener('input', (e) => { curStore().tel = e.target.value.trim(); persist(); renderSummary(); });
 $('set-store-name').addEventListener('input', (e) => {
   const s = curStore();
   s.name = e.target.value;
@@ -1307,6 +1368,7 @@ $('set-items').addEventListener('click', (e) => {
   s.items.splice(i, 1);
   delete order.qty[id];
   delete order.notes[id];
+  delete order.adds[id];
   saveDraft();
   s.example = false;
   persist();
@@ -1317,7 +1379,7 @@ $('set-items').addEventListener('click', (e) => {
 
 $('set-add-item').addEventListener('click', () => {
   const s = curStore();
-  const it = { id: newId('i'), name: '', price: 0, cat: '', code: '', hot: false, rec: false, veg: false, sweet: false, sub: '', opts: [] };
+  const it = { id: newId('i'), name: '', price: 0, cat: '', code: '', hot: false, rec: false, veg: false, sweet: false, sub: '', opts: [], adds: [] };
   s.items.push(it);
   if (s.example) { s.example = false; persist(); }
   setView.q = '';
@@ -1341,7 +1403,9 @@ $('del-store').addEventListener('click', () => {
   cfg.stores = cfg.stores.filter((x) => x.id !== s.id);
   delete cfg.last[s.id];
   delete cfg.freq[s.id];
-  for (const it of s.items) { delete order.qty[it.id]; delete order.notes[it.id]; }
+  if (!cfg.removed.includes(s.id)) cfg.removed.push(s.id);  // keeps a built-in store from coming back on update
+  delete order.timeBy[s.id];
+  for (const it of s.items) { delete order.qty[it.id]; delete order.notes[it.id]; delete order.adds[it.id]; }
   cfg.storeId = cfg.stores[0].id;
   resetView();
   persist();
